@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>폰프리 사용량 조사</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6f3; --card:#ffffff; --ink:#1d2420; --sub:#5d6862; --line:#dfe4e0;
+  --pri:#1f7a53; --pri-soft:#e3f2ea; --warn:#b4541f; --warn-soft:#fbeee5; --done:#8a958f;
+  --radius:16px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,-apple-system,sans-serif;-webkit-text-size-adjust:100%}
+.wrap{max-width:560px;margin:0 auto;padding:20px 16px 60px}
+.wrap.wide{max-width:1040px}
+h1{font-size:22px;font-weight:900;margin:4px 0 2px;letter-spacing:-.02em}
+h2{font-size:16px;font-weight:700;margin:0 0 12px}
+.sub{color:var(--sub);font-size:14px;line-height:1.55}
+.badge{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--pri-soft);color:var(--pri)}
+.badge.warn{background:var(--warn-soft);color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-top:14px}
+.step{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.step b{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--pri);color:#fff;font-size:13px}
+.step span{font-weight:700}
+.nums{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.nums button{aspect-ratio:1;border:1px solid var(--line);background:#fff;border-radius:10px;font:inherit;font-weight:700;font-size:15px;color:var(--ink);cursor:pointer;position:relative}
+.nums button.done{color:var(--done);background:#f1f3f2}
+.nums button.done::after{content:"✓";position:absolute;top:1px;right:4px;font-size:10px;color:var(--pri)}
+.nums button.sel{background:var(--pri);border-color:var(--pri);color:#fff}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg button{padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff;font:inherit;font-weight:700;cursor:pointer;color:var(--ink)}
+.seg button.sel{border-color:var(--pri);background:var(--pri-soft);color:var(--pri)}
+.howto{margin-top:12px;background:#f7f9f8;border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.7;color:var(--sub)}
+.howto b{color:var(--ink)}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:26px 12px;text-align:center;cursor:pointer;color:var(--sub);font-size:14px;background:#fafbfa}
+.drop strong{display:block;color:var(--pri);font-size:16px;margin-bottom:4px}
+.drop input{display:none}
+.preview{display:flex;gap:12px;align-items:flex-start;margin-top:12px}
+.preview img{width:90px;border-radius:10px;border:1px solid var(--line)}
+.progress{height:8px;background:#eef1ef;border-radius:99px;overflow:hidden;margin-top:8px}
+.progress i{display:block;height:100%;width:0;background:var(--pri);transition:width .2s}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 12px;font:inherit;font-size:14px;cursor:pointer;color:var(--ink)}
+.chips button.sel{border-color:var(--pri);background:var(--pri);color:#fff}
+.timein{display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:700}
+.timein input{width:76px;padding:12px 10px;font:inherit;font-size:20px;font-weight:900;text-align:center;border:1px solid var(--line);border-radius:12px}
+.btn{display:block;width:100%;padding:15px;border:0;border-radius:14px;background:var(--pri);color:#fff;font:inherit;font-weight:700;font-size:16px;cursor:pointer;margin-top:16px}
+.btn:disabled{background:#b9c4be;cursor:not-allowed}
+.btn.ghost{background:#fff;color:var(--pri);border:1px solid var(--pri)}
+.btn.sm{display:inline-block;width:auto;padding:8px 14px;font-size:14px;margin:0;border-radius:10px}
+.note{font-size:12.5px;color:var(--sub);margin-top:10px;line-height:1.6}
+.err{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:12px 14px;font-size:14px;margin-top:12px;line-height:1.6}
+.big{font-size:44px;font-weight:900;letter-spacing:-.03em;margin:8px 0}
+.center{text-align:center}
+.demo{background:#fff6d8;color:#7a5a00;font-size:13px;padding:8px 12px;border-radius:10px;margin-bottom:10px}
+.hidden{display:none!important}
+/* admin */
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.stat small{color:var(--sub);font-size:12.5px}
+.stat div{font-size:24px;font-weight:900;margin-top:4px}
+select,.inp{padding:9px 12px;border:1px solid var(--line);border-radius:10px;font:inherit;background:#fff;color:var(--ink)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px;min-width:560px}
+th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:center}
+th{font-size:12.5px;color:var(--sub);font-weight:500}
+td.l,th.l{text-align:left}
+.bar{height:10px;background:var(--pri);border-radius:99px;min-width:2px}
+.bar.b{background:#9cc9b2}
+.down{color:var(--pri);font-weight:700}
+.up{color:var(--warn);font-weight:700}
+.links td{font-size:13px}
+.links code{background:#f2f4f3;padding:2px 6px;border-radius:6px;font-size:12px;word-break:break-all}
+.qrgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.qrbox{border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center;background:#fff}
+.qrbox .q{display:flex;justify-content:center;margin:8px 0}
+.qrbox b{font-size:20px}
+@media print{
+  body{background:#fff}
+  .noprint{display:none!important}
+  .qrbox{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div id="app" class="wrap"></div>
+
+<script>
+/* ================== 설정 ================== */
+const CONFIG = {
+  // Apps Script 웹 앱 URL. 비워두면 데모 모드(저장 안 됨)로 동작합니다.
+  API_URL: 'https://script.google.com/macros/s/AKfycbzDndiSIbsrX7vq8obsTyYVnF6P7xAHW83qF9nAvoDE30vZIPtit9Ovq1Zk_9bKEHC_/exec',
+  TITLE: '폰프리 사용량 조사',
+  GRADE: '2학년',
+  // 학생에게 보여줄 측정 기준
+  METRIC: '최근 7일 하루 평균 사용 시간',
+  HOWTO: {
+    ios: '<b>설정</b> → <b>스크린 타임</b> → <b>모든 활동 보기</b> → 위쪽 <b>‘주’</b> 탭<br>‘일일 평균’ 시간이 보이게 캡처하세요.',
+    android: '<b>설정</b> → <b>디지털 웰빙 및 자녀 보호</b> → 화면 시간 그래프 → <b>주간</b> 보기<br>‘일일 평균’ 시간이 보이게 캡처하세요. (기종마다 메뉴 이름이 조금 달라요)'
+  }
+};
+/* ========================================= */
+
+const $ = s => document.querySelector(s);
+const app = $('#app');
+const params = new URLSearchParams(location.search);
+const DEMO = !CONFIG.API_URL;
+const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmt = m => { if (m == null || isNaN(m)) return '-'; m = Math.round(m); const h = Math.floor(m/60), mm = m%60; return h ? `${h}시간 ${mm}분` : `${mm}분`; };
+
+/* ---------- 시간 문자열 파싱 ---------- */
+function parseTimes(raw){
+  const text = String(raw)
+    .replace(/[Oo](?=\s*(시간|분|h|m))/g,'0')
+    .replace(/(\d)\s+(\d)(?=\s*(시간|분))/g,'$1$2');
+  const re = /(\d{1,2})\s*(?:시간|hours?|hrs?|h)\s*(?:(\d{1,2})\s*(?:분|minutes?|mins?|m)(?![a-z]))?|(\d{1,3})\s*(?:분|minutes?|mins?|m)(?![a-z])/gi;
+  const kw = /(일일\s*평균|평균|오늘|하루|총\s*사용|daily\s*average|average|today|total)/i;
+  const out = []; let m;
+  while ((m = re.exec(text))){
+    let min;
+    if (m[1] != null){ min = Number(m[1])*60 + (m[2] ? Number(m[2]) : 0); }
+    else { min = Number(m[3]); }
+    if (!(min > 0 && min <= 1440)) continue;
+    const before = text.slice(Math.max(0, m.index - 40), m.index);
+    out.push({ min, label: m[0].replace(/\s+/g,' ').trim(), key: kw.test(before), idx: m.index, hasHour: m[1] != null });
+  }
+  // 중복 제거
+  const seen = new Set(); const uniq = [];
+  for (const c of out){ if (!seen.has(c.min)){ seen.add(c.min); uniq.push(c); } }
+  // 추천값: 키워드 바로 뒤 → 시간 단위 포함 중 가장 앞 → 최댓값
+  let best = uniq.find(c => c.key) || uniq.find(c => c.hasHour) || uniq.slice().sort((a,b)=>b.min-a.min)[0] || null;
+  return { candidates: uniq.slice(0, 8), best };
+}
+
+/* ---------- 이미지 전처리 + OCR ---------- */
+async function prepImage(file){
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+  const scale = img.width < 1000 ? 2 : 1;
+  const W = img.width*scale, H = Math.min(img.height*scale, W*2.6); // 위쪽 위주로 읽기
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, 0, 0, img.width, H/scale, 0, 0, W, H);
+  const d = ctx.getImageData(0, 0, W, H), px = d.data;
+  let sum = 0;
+  for (let i = 0; i < px.length; i += 4){ const g = .299*px[i]+.587*px[i+1]+.114*px[i+2]; px[i]=px[i+1]=px[i+2]=g; sum += g; }
+  const dark = sum/(px.length/4) < 110; // 다크 모드면 반전
+  for (let i = 0; i < px.length; i += 4){
+    let g = px[i]; if (dark) g = 255-g;
+    g = g < 150 ? Math.max(0, g*0.6) : 255; // 대비 강화
+    px[i]=px[i+1]=px[i+2]=g;
+  }
+  ctx.putImageData(d, 0, 0);
+  return { canvas: cv, url: img.src };
+}
+async function runOCR(file, onProgress){
+  const { canvas } = await prepImage(file);
+  const r = await Tesseract.recognize(canvas, 'kor+eng', {
+    logger: m => { if (m.status === 'recognizing text') onProgress(m.progress); else if (/load/.test(m.status)) onProgress(Math.min(.15, (m.progress||0)*.15)); }
+  });
+  return r.data.text;
+}
+
+/* ---------- API ---------- */
+const mock = (() => {
+  const keys = {}; for (let c = 1; c <= 10; c++) keys[c] = 'DEMO' + c;
+  let round = 1, open = true; const rows = [];
+  for (let c = 1; c <= 10; c++) for (let n = 1; n <= 28; n++){
+    if (Math.random() < .25) continue;
+    const base = 180 + Math.random()*240 + c*6;
+    rows.push({ round:1, c, num:n, min:Math.round(base), device: Math.random()<.6?'아이폰':'안드로이드', method:'자동인식' });
+    if (Math.random() < .7) rows.push({ round:2, c, num:n, min:Math.round(base*(.6+Math.random()*.45)), device:'아이폰', method:'자동인식' });
+  }
+  return async p => {
+    await new Promise(r => setTimeout(r, 250));
+    const chk = () => { const c = Number(p.c); if (!keys[c] || keys[c] !== p.k) throw new Error('입장 링크가 올바르지 않습니다.'); return c; };
+    if (p.action === 'info'){ const c = chk(); return { ok:true, classNo:c, round, open, maxNumber:35, submitted: rows.filter(r=>r.round===round&&r.c===c).map(r=>r.num) }; }
+    if (p.action === 'submit'){ const c = chk(); const i = rows.findIndex(r=>r.round===round&&r.c===c&&r.num===Number(p.num)); const row={round,c,num:Number(p.num),min:Number(p.min),device:p.device==='ios'?'아이폰':'안드로이드',method:p.method==='auto'?'자동인식':'직접수정'}; if(i>=0) rows[i]=row; else rows.push(row); return {ok:true, updated:i>=0}; }
+    if (p.action === 'admin'){ if (p.key !== 'demo') throw new Error('관리자 비밀번호가 틀렸습니다. (데모: demo)'); return { ok:true, round, open, classCount:10, maxNumber:35, keys, rows }; }
+    if (p.action === 'setRound'){ if (p.round) round = Number(p.round); if (p.open) open = p.open === 'true'; return { ok:true }; }
+    throw new Error('알 수 없는 요청');
+  };
+})();
+async function api(p){
+  let res;
+  if (DEMO) res = await mock(p);
+  else {
+    const r = await fetch(CONFIG.API_URL + '?' + new URLSearchParams(p).toString());
+    res = await r.json();
+  }
+  if (!res.ok) throw new Error(res.error || '오류가 발생했습니다.');
+  return res;
+}
+
+/* ================== 학생 화면 ================== */
+const S = { classNo:null, key:null, round:1, open:true, maxNumber:35, submitted:[], num:null, device:null, ocrMin:null, cands:[], min:null };
+
+async function studentInit(){
+  S.classNo = params.get('c'); S.key = params.get('k');
+  if (!S.classNo || !S.key){
+    app.innerHTML = `<h1>${esc(CONFIG.TITLE)}</h1><div class="err">반장에게 받은 <b>우리 반 전용 링크</b>로 들어와 주세요.</div>`;
+    return;
+  }
+  app.innerHTML = `<p class="sub">불러오는 중…</p>`;
+  try {
+    const r = await api({ action:'info', c:S.classNo, k:S.key });
+    Object.assign(S, { round:r.round, open:r.open, maxNumber:r.maxNumber, submitted:r.submitted });
+    renderStudent();
+  } catch(e){ app.innerHTML = `<h1>${esc(CONFIG.TITLE)}</h1><div class="err">${esc(e.message)}</div>`; }
+}
+
+function renderStudent(){
+  const head = `${DEMO?'<div class="demo">데모 모드: 실제로 저장되지 않아요.</div>':''}
+    <span class="badge">${esc(CONFIG.GRADE)} ${esc(S.classNo)}반 · ${S.round}회차</span>
+    <h1>${esc(CONFIG.TITLE)}</h1>
+    <p class="sub">측정 기준: <b>${esc(CONFIG.METRIC)}</b></p>`;
+  if (!S.open){ app.innerHTML = head + `<div class="err">지금은 제출 기간이 아니에요. 선생님 안내를 기다려 주세요.</div>`; return; }
+
+  let nums = '';
+  for (let n = 1; n <= S.maxNumber; n++){
+    const cls = [S.submitted.includes(n)?'done':'', S.num===n?'sel':''].join(' ');
+    nums += `<button class="${cls}" data-n="${n}">${n}</button>`;
+  }
+  app.innerHTML = head + `
+  <div class="card">
+    <div class="step"><b>1</b><span>내 번호 고르기</span></div>
+    <div class="nums" id="nums">${nums}</div>
+    <p class="note">✓ 표시는 이미 제출한 번호예요. 다시 내면 새 값으로 바뀌어요.</p>
+  </div>
+  <div class="card ${S.num?'':'hidden'}" id="c2">
+    <div class="step"><b>2</b><span>내 폰 종류</span></div>
+    <div class="seg">
+      <button data-d="ios" class="${S.device==='ios'?'sel':''}">아이폰</button>
+      <button data-d="android" class="${S.device==='android'?'sel':''}">안드로이드</button>
+    </div>
+    <div class="howto ${S.device?'':'hidden'}" id="howto">${S.device?CONFIG.HOWTO[S.device]:''}</div>
+  </div>
+  <div class="card ${S.device&&S.num?'':'hidden'}" id="c3">
+    <div class="step"><b>3</b><span>캡처 올리고 시간 확인</span></div>
+    <label class="drop"><input type="file" accept="image/*" id="file"><strong>캡처 이미지 선택</strong>사용 시간 화면을 캡처해서 올려주세요</label>
+    <div id="ocrbox"></div>
+    <div class="timein">
+      <input type="number" inputmode="numeric" id="hh" min="0" max="24" placeholder="0"> 시간
+      <input type="number" inputmode="numeric" id="mm" min="0" max="59" placeholder="0"> 분
+    </div>
+    <p class="note">🔒 사진은 이 폰 안에서만 읽고 <b>서버로 보내지 않아요.</b> 시간 숫자만 저장돼요.<br>자동 인식이 틀리면 직접 고쳐서 내면 돼요.</p>
+    <button class="btn" id="submit" disabled>제출하기</button>
+    <div id="serr"></div>
+  </div>`;
+
+  $('#nums').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.num = Number(b.dataset.n); renderStudent(); };
+  app.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { S.device = b.dataset.d; renderStudent(); });
+  const file = $('#file'); if (file) file.onchange = onFile;
+  const hh = $('#hh'), mm = $('#mm');
+  if (hh){
+    if (S.min != null){ hh.value = Math.floor(S.min/60); mm.value = S.min%60; }
+    hh.oninput = mm.oninput = syncTime;
+    $('#submit').onclick = onSubmit;
+    syncTime();
+    if (S.cands.length) drawCands();
+  }
+}
+
+function syncTime(){
+  const h = Number($('#hh').value||0), m = Number($('#mm').value||0);
+  const ok = ($('#hh').value!=='' || $('#mm').value!=='') && h>=0 && h<=24 && m>=0 && m<60 && (h*60+m)<=1440;
+  S.min = ok ? h*60+m : null;
+  $('#submit').disabled = !ok;
+  app.querySelectorAll('.chips button').forEach(b => b.classList.toggle('sel', Number(b.dataset.m) === S.min));
+}
+
+function drawCands(){
+  const box = $('#ocrbox');
+  if (!S.cands.length){ box.innerHTML = `<div class="err">시간을 찾지 못했어요. 아래에 직접 입력해 주세요.</div>`; return; }
+  box.innerHTML = `<p class="note" style="margin-top:12px">찾은 시간 (맞는 것을 누르세요)</p><div class="chips">${S.cands.map(c=>`<button data-m="${c.min}">${fmt(c.min)}</button>`).join('')}</div>`;
+  box.querySelectorAll('button').forEach(b => b.onclick = () => { const v = Number(b.dataset.m); $('#hh').value = Math.floor(v/60); $('#mm').value = v%60; syncTime(); });
+  syncTime();
+}
+
+async function onFile(e){
+  const f = e.target.files[0]; if (!f) return;
+  const box = $('#ocrbox');
+  box.innerHTML = `<div class="preview"><img src="${URL.createObjectURL(f)}" alt=""><div style="flex:1"><div class="sub">시간을 읽는 중… <span id="pct">0%</span></div><div class="progress"><i id="bar"></i></div><p class="note">처음에는 글자 데이터를 받느라 10~20초 걸릴 수 있어요.</p></div></div>`;
+  try {
+    const text = await runOCR(f, p => { const v = Math.round(p*100); const b = $('#bar'), t = $('#pct'); if (b) b.style.width = v+'%'; if (t) t.textContent = v+'%'; });
+    const { candidates, best } = parseTimes(text);
+    S.cands = candidates; S.ocrMin = best ? best.min : null;
+    if (best){ $('#hh').value = Math.floor(best.min/60); $('#mm').value = best.min%60; }
+    drawCands();
+  } catch(err){
+    S.cands = []; S.ocrMin = null;
+    box.innerHTML = `<div class="err">이미지를 읽지 못했어요. 아래에 직접 입력해 주세요.</div>`;
+  }
+}
+
+async function onSubmit(){
+  const btn = $('#submit'); btn.disabled = true; btn.textContent = '제출 중…';
+  try {
+    const r = await api({ action:'submit', c:S.classNo, k:S.key, num:S.num, min:S.min, device:S.device,
+      method: S.ocrMin === S.min ? 'auto' : 'manual', ocr: S.ocrMin ?? '' });
+    app.innerHTML = `<div class="card center" style="margin-top:40px">
+      <span class="badge">${esc(S.classNo)}반 ${S.num}번 · ${S.round}회차</span>
+      <div class="big">${fmt(S.min)}</div>
+      <p class="sub">${r.updated?'새 값으로 바꿔서 ':''}제출했어요. 고마워요!</p>
+      <button class="btn ghost" onclick="location.reload()">처음으로</button></div>`;
+  } catch(e){
+    btn.disabled = false; btn.textContent = '제출하기';
+    $('#serr').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+/* ================== 관리자 화면 ================== */
+const A = { key:null, data:null, base:1, cmp:2 };
+
+function adminLogin(msg){
+  app.className = 'wrap';
+  app.innerHTML = `${DEMO?'<div class="demo">데모 모드: 비밀번호 demo</div>':''}
+    <span class="badge">관리자</span><h1>${esc(CONFIG.TITLE)}</h1>
+    <div class="card"><h2>관리자 비밀번호</h2>
+      <input class="inp" type="password" id="ak" style="width:100%;padding:13px" placeholder="비밀번호">
+      <button class="btn" id="ago">들어가기</button>${msg?`<div class="err">${esc(msg)}</div>`:''}</div>`;
+  const go = async () => { A.key = $('#ak').value; await adminLoad(); };
+  $('#ago').onclick = go; $('#ak').onkeydown = e => { if (e.key === 'Enter') go(); };
+}
+
+async function adminLoad(){
+  try {
+    A.data = await api({ action:'admin', key:A.key });
+    const rounds = [...new Set(A.data.rows.map(r=>r.round))].sort((a,b)=>a-b);
+    if (!rounds.includes(A.base)) A.base = rounds[0] || 1;
+    if (!rounds.includes(A.cmp)) A.cmp = rounds[rounds.length-1] || A.data.round;
+    renderAdmin();
+  } catch(e){ adminLogin(e.message); }
+}
+
+function avg(a){ return a.length ? a.reduce((s,x)=>s+x,0)/a.length : null; }
+
+function renderAdmin(){
+  const D = A.data; app.className = 'wrap wide';
+  const rounds = [...new Set([...D.rows.map(r=>r.round), D.round])].sort((a,b)=>a-b);
+  const cur = D.rows.filter(r => r.round === D.round);
+  const base = location.origin + location.pathname;
+  const per = [];
+  for (let c = 1; c <= D.classCount; c++){
+    const a = D.rows.filter(r => r.c===c && r.round===A.base).map(r=>r.min);
+    const b = D.rows.filter(r => r.c===c && r.round===A.cmp).map(r=>r.min);
+    const n = cur.filter(r => r.c===c).length;
+    const ma = avg(a), mb = avg(b);
+    per.push({ c, n, ma, mb, na:a.length, nb:b.length, chg: (ma && mb!=null && A.base!==A.cmp) ? (mb-ma)/ma*100 : null });
+  }
+  const maxAvg = Math.max(1, ...per.map(p => Math.max(p.ma||0, p.mb||0)));
+  const ranked = per.filter(p=>p.chg!=null).sort((x,y)=>x.chg-y.chg);
+  const rank = Object.fromEntries(ranked.map((p,i)=>[p.c, i+1]));
+  const allA = avg(D.rows.filter(r=>r.round===A.base).map(r=>r.min));
+  const allB = avg(D.rows.filter(r=>r.round===A.cmp).map(r=>r.min));
+  const opt = (v, sel) => rounds.concat(rounds.includes(v)?[]:[]).map(r=>`<option value="${r}" ${r===sel?'selected':''}>${r}회차</option>`).join('');
+
+  app.innerHTML = `${DEMO?'<div class="demo noprint">데모 모드: 무작위 예시 데이터예요.</div>':''}
+  <div class="noprint">
+    <div class="row" style="justify-content:space-between">
+      <div><span class="badge">관리자</span><h1>${esc(CONFIG.TITLE)} · ${esc(CONFIG.GRADE)}</h1></div>
+      <div class="row"><button class="btn sm ghost" id="reload">새로고침</button><button class="btn sm ghost" id="csv">CSV 받기</button></div>
+    </div>
+
+    <div class="card">
+      <h2>제출 설정</h2>
+      <div class="row">
+        <span class="sub">현재 회차</span>
+        <select id="round">${[...rounds, rounds[rounds.length-1]+1].map(r=>`<option value="${r}" ${r===D.round?'selected':''}>${r}회차${r>Math.max(...rounds)?' (새로 시작)':''}</option>`).join('')}</select>
+        <span class="badge ${D.open?'':'warn'}">${D.open?'제출 받는 중':'제출 마감'}</span>
+        <button class="btn sm ${D.open?'ghost':''}" id="toggle">${D.open?'제출 마감하기':'제출 열기'}</button>
+      </div>
+      <p class="note">회차를 바꾸면 학생 제출이 새 회차로 저장돼요. (예: 1회차 = 폰프리 전, 2회차 = 폰프리 후)</p>
+    </div>
+
+    <div class="stats" style="margin-top:14px">
+      <div class="stat"><small>${D.round}회차 제출 인원</small><div>${cur.length}명</div></div>
+      <div class="stat"><small>${A.base}회차 학년 평균</small><div>${fmt(allA)}</div></div>
+      <div class="stat"><small>${A.cmp}회차 학년 평균</small><div>${fmt(allB)}</div></div>
+      <div class="stat"><small>변화</small><div class="${allA&&allB!=null&&allB<allA?'down':'up'}">${allA&&allB!=null&&A.base!==A.cmp?((allB-allA)/allA*100).toFixed(1)+'%':'-'}</div></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">반별 비교</h2>
+        <div class="row"><select id="base">${opt(A.base,A.base)}</select><span class="sub">→</span><select id="cmp">${opt(A.cmp,A.cmp)}</select></div>
+      </div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>반</th><th>${D.round}회차 제출</th><th class="l" style="width:34%">평균 (연한색 ${A.base}회차 / 진한색 ${A.cmp}회차)</th><th>${A.base}회차</th><th>${A.cmp}회차</th><th>변화율</th><th>감소 순위</th></tr></thead>
+        <tbody>${per.map(p=>`<tr>
+          <td><b>${p.c}반</b></td><td>${p.n}명</td>
+          <td class="l"><div class="bar b" style="width:${(p.ma||0)/maxAvg*100}%"></div><div class="bar" style="width:${(p.mb||0)/maxAvg*100}%;margin-top:4px"></div></td>
+          <td>${fmt(p.ma)}<br><small class="sub">${p.na}명</small></td><td>${fmt(p.mb)}<br><small class="sub">${p.nb}명</small></td>
+          <td class="${p.chg==null?'':p.chg<0?'down':'up'}">${p.chg==null?'-':(p.chg>0?'+':'')+p.chg.toFixed(1)+'%'}</td>
+          <td>${rank[p.c]?rank[p.c]+'위':'-'}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <p class="note">평균은 제출한 학생 기준이에요. 회차별 제출 인원이 크게 다르면 비교에 주의하세요.</p>
+    </div>
+
+    <div class="card links">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">반별 입장 링크</h2><button class="btn sm" id="printqr">QR 인쇄</button></div>
+      <div class="tablewrap"><table><tbody>${Object.entries(D.keys).map(([c,k])=>{ const u = `${base}?c=${c}&k=${k}`; return `<tr><td><b>${c}반</b></td><td class="l"><code>${esc(u)}</code></td><td><button class="btn sm ghost" data-copy="${esc(u)}">복사</button></td></tr>`; }).join('')}</tbody></table></div>
+      <p class="note">링크마다 반 입장키가 들어 있어요. 반장에게 자기 반 링크만 전달해 주세요.</p>
+    </div>
+  </div>
+  <div id="qrarea" class="hidden"><h1 class="center">${esc(CONFIG.TITLE)}</h1><p class="sub center">${esc(CONFIG.METRIC)}</p><div class="qrgrid" id="qrgrid"></div>
+    <button class="btn noprint" id="qrback">돌아가기</button></div>`;
+
+  $('#reload').onclick = adminLoad;
+  $('#base').onchange = e => { A.base = Number(e.target.value); renderAdmin(); };
+  $('#cmp').onchange = e => { A.cmp = Number(e.target.value); renderAdmin(); };
+  $('#round').onchange = async e => { if (!confirmRound(Number(e.target.value))) { e.target.value = D.round; return; } await api({ action:'setRound', key:A.key, round:e.target.value }); adminLoad(); };
+  $('#toggle').onclick = async () => { await api({ action:'setRound', key:A.key, open: String(!D.open) }); adminLoad(); };
+  app.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨'; } catch { prompt('복사하세요', b.dataset.copy); } });
+  $('#csv').onclick = () => downloadCSV(D);
+  $('#printqr').onclick = () => {
+    const g = $('#qrgrid'); g.innerHTML = '';
+    Object.entries(D.keys).forEach(([c,k]) => {
+      const box = document.createElement('div'); box.className = 'qrbox';
+      box.innerHTML = `<b>${esc(CONFIG.GRADE)} ${c}반</b><div class="q"></div><small class="sub">우리 반 전용 · 다른 반 공유 금지</small>`;
+      g.appendChild(box);
+      new QRCode(box.querySelector('.q'), { text:`${base}?c=${c}&k=${k}`, width:150, height:150 });
+    });
+    app.querySelector('.noprint').classList.add('hidden'); $('#qrarea').classList.remove('hidden');
+    setTimeout(() => window.print(), 300);
+  };
+  $('#qrback').onclick = () => renderAdmin();
+}
+function confirmRound(r){ return window.confirm(`현재 회차를 ${r}회차로 바꿀까요? 이후 학생 제출은 ${r}회차로 저장돼요.`); }
+
+function downloadCSV(D){
+  const lines = [['회차','반','번호','사용시간(분)','기기','입력방식']].concat(
+    D.rows.slice().sort((a,b)=>a.round-b.round||a.c-b.c||a.num-b.num).map(r=>[r.round,r.c,r.num,r.min,r.device,r.method]));
+  const blob = new Blob(['﻿' + lines.map(l=>l.join(',')).join('\n')], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '폰프리_사용량.csv'; a.click();
+}
+
+/* ---------- 시작 ---------- */
+if (params.has('admin')) adminLogin(); else studentInit();
+</script>
+</body>
+</html>
