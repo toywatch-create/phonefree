@@ -95,9 +95,9 @@ td.l,th.l{text-align:left}
 /* ================== 설정 ================== */
 const CONFIG = {
   // Apps Script 웹 앱 URL. 비워두면 데모 모드(저장 안 됨)로 동작합니다.
-  API_URL: 'https://script.google.com/macros/s/AKfycbyUst6ikC1rvRLhT-TtPhXLScPVg0p74Re_5yIAjsde_6oaF4lrySjuCSoulJQcoA7v/exec',
+  API_URL: '',
   TITLE: '폰프리 사용량 조사',
-  GRADE: '2학년',
+  GRADE: '1학년',
   // 학생에게 보여줄 측정 기준
   METRIC: '최근 7일 하루 평균 사용 시간',
   HOWTO: {
@@ -182,6 +182,7 @@ const mock = (() => {
     if (p.action === 'info'){ const c = chk(); return { ok:true, classNo:c, round, open, maxNumber:35, submitted: rows.filter(r=>r.round===round&&r.c===c).map(r=>r.num) }; }
     if (p.action === 'submit'){ const c = chk(); const i = rows.findIndex(r=>r.round===round&&r.c===c&&r.num===Number(p.num)); const row={round,c,num:Number(p.num),min:Number(p.min),device:p.device==='ios'?'아이폰':'안드로이드',method:p.method==='auto'?'자동인식':'직접수정'}; if(i>=0) rows[i]=row; else rows.push(row); return {ok:true, updated:i>=0}; }
     if (p.action === 'admin'){ if (p.key !== 'demo') throw new Error('관리자 비밀번호가 틀렸습니다. (데모: demo)'); return { ok:true, round, open, classCount:10, maxNumber:35, keys, rows }; }
+    if (p.action === 'reset'){ const before = rows.length; const keep = p.scope==='all' ? [] : rows.filter(r=>r.round!==Number(p.round)); rows.length = 0; rows.push(...keep); if (p.scope==='all') round = 1; return { ok:true, deleted: before-keep.length }; }
     if (p.action === 'setRound'){ if (p.round) round = Number(p.round); if (p.open) open = p.open === 'true'; return { ok:true }; }
     throw new Error('알 수 없는 요청');
   };
@@ -190,12 +191,14 @@ async function api(p){
   let res;
   if (DEMO) res = await mock(p);
   else {
+    // 'c'는 구글 Apps Script가 내부적으로 쓰는 예약 파라미터라 'cls'로 바꿔 보냄
     const q = { ...p }; if ('c' in q){ q.cls = q.c; delete q.c; }
     try {
       const r = await fetch(CONFIG.API_URL + '?' + new URLSearchParams(q).toString());
       res = JSON.parse(await r.text());
     } catch (e) {
-      throw new Error('서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요. (계속되면 선생님께 알려주세요: Apps Script 배포 설정 확인 필요)');
+      console.error('[phonefree] API 연결 실패', e);
+      throw new Error('서버에 연결하지 못했어요. 와이파이를 끄고 데이터로 접속하거나, 다른 브라우저(크롬 시크릿 창 등)로 다시 열어 주세요. (오류: ' + (e && e.message || e) + ')');
     }
   }
   if (!res.ok) throw new Error(res.error || '오류가 발생했습니다.');
@@ -412,6 +415,18 @@ function renderAdmin(){
       <div class="tablewrap"><table><tbody>${Object.entries(D.keys).map(([c,k])=>{ const u = `${base}?c=${c}&k=${k}`; return `<tr><td><b>${c}반</b></td><td class="l"><code>${esc(u)}</code></td><td><button class="btn sm ghost" data-copy="${esc(u)}">복사</button></td></tr>`; }).join('')}</tbody></table></div>
       <p class="note">링크마다 반 입장키가 들어 있어요. 반장에게 자기 반 링크만 전달해 주세요.</p>
     </div>
+
+    <div class="card">
+      <h2>기록 초기화</h2>
+      <div class="row">
+        <select id="rsScope">
+          ${rounds.map(r=>`<option value="round:${r}">${r}회차 기록만 지우기 (${D.rows.filter(x=>x.round===r).length}건)</option>`).join('')}
+          <option value="all">전체 기록 지우기 (${D.rows.length}건, 1회차로 돌아감)</option>
+        </select>
+        <button class="btn sm" id="rsGo" style="background:var(--warn)">초기화</button>
+      </div>
+      <p class="note">지운 기록은 되돌릴 수 없어요. 필요하면 먼저 <b>CSV 받기</b>로 백업하세요. 반별 입장 링크는 바뀌지 않아요.</p>
+    </div>
   </div>
   <div id="qrarea" class="hidden"><h1 class="center">${esc(CONFIG.TITLE)}</h1><p class="sub center">${esc(CONFIG.METRIC)}</p><div class="qrgrid" id="qrgrid"></div>
     <button class="btn noprint" id="qrback">돌아가기</button></div>`;
@@ -423,6 +438,17 @@ function renderAdmin(){
   $('#toggle').onclick = async () => { await api({ action:'setRound', key:A.key, open: String(!D.open) }); adminLoad(); };
   app.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨'; } catch { prompt('복사하세요', b.dataset.copy); } });
   $('#csv').onclick = () => downloadCSV(D);
+  $('#rsGo').onclick = async () => {
+    const v = $('#rsScope').value, all = v === 'all', r = all ? null : Number(v.split(':')[1]);
+    const label = all ? '전체 기록' : `${r}회차 기록`;
+    const typed = window.prompt(`${label}을 지웁니다. 되돌릴 수 없어요.\n계속하려면 '초기화'라고 입력하세요.`);
+    if (typed !== '초기화') return;
+    try {
+      const res = await api(all ? { action:'reset', key:A.key, scope:'all' } : { action:'reset', key:A.key, scope:'round', round:r });
+      alert(`${res.deleted}건을 지웠어요.`);
+      adminLoad();
+    } catch(e){ alert(e.message); }
+  };
   $('#printqr').onclick = () => {
     const g = $('#qrgrid'); g.innerHTML = '';
     Object.entries(D.keys).forEach(([c,k]) => {
