@@ -173,8 +173,11 @@ const mock = (() => {
   for (let c = 1; c <= 10; c++) for (let n = 1; n <= 28; n++){
     if (Math.random() < .25) continue;
     const base = 180 + Math.random()*240 + c*6;
-    rows.push({ round:1, c, num:n, min:Math.round(base), device: Math.random()<.6?'아이폰':'안드로이드', method:'자동인식' });
-    if (Math.random() < .7) rows.push({ round:2, c, num:n, min:Math.round(base*(.6+Math.random()*.45)), device:'아이폰', method:'자동인식' });
+    for (let r = 1; r <= 5; r++){
+      if (r > 1 && Math.random() < .25) continue;
+      const f = 1 - (r-1)*(.04 + (c%4)*.02) + (Math.random()-.5)*.2;
+      rows.push({ round:r, c, num:n, min:Math.round(base*f), device: Math.random()<.6?'아이폰':'안드로이드', method:'자동인식' });
+    }
   }
   return async p => {
     await new Promise(r => setTimeout(r, 250));
@@ -347,6 +350,56 @@ async function adminLoad(){
 }
 
 function avg(a){ return a.length ? a.reduce((s,x)=>s+x,0)/a.length : null; }
+const hm = m => { if (m == null) return '-'; m = Math.round(m); return `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`; };
+
+/* ---------- 회차별 추이 ---------- */
+function trendHTML(D){
+  const rs = [...new Set(D.rows.map(r=>r.round))].sort((a,b)=>a-b);
+  if (rs.length < 2) return `<div class="card"><h2>회차별 추이</h2><p class="sub">2회차 이상 기록이 쌓이면 반별 추이가 여기에 나와요.</p></div>`;
+  const A_ = (c, r) => avg(D.rows.filter(x => (c==null || x.c===c) && x.round===r).map(x=>x.min));
+  const N_ = (c, r) => D.rows.filter(x => (c==null || x.c===c) && x.round===r).length;
+  const classes = Array.from({length:D.classCount}, (_,i)=>i+1);
+  const grid = classes.map(c => rs.map(r => A_(c,r)));
+  const gradeLine = rs.map(r => A_(null,r));
+  const vals = grid.flat().filter(v=>v!=null);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const shade = v => { if (v==null) return ''; const t = hi>lo ? (v-lo)/(hi-lo) : .5; return `background:rgba(${Math.round(31+150*t)},${Math.round(122-40*t)},${Math.round(83-50*t)},${.10+.22*t})`; };
+  const chg = (a,b) => (a && b!=null) ? (b-a)/a*100 : null;
+  const pct = v => v==null ? '-' : (v>0?'+':'')+v.toFixed(1)+'%';
+  const arrow = (prev, v) => (prev==null||v==null) ? '' : v<prev ? '<small class="down"> ▼</small>' : v>prev ? '<small class="up"> ▲</small>' : '';
+
+  // 꺾은선 그래프
+  const W=760, H=260, L=64, R=36, T=22, B=34;
+  const yMax = Math.ceil(Math.max(...vals, ...gradeLine.filter(v=>v!=null))/60)*60 || 60;
+  const x = i => rs.length===1 ? L+(W-L-R)/2 : L + i*(W-L-R)/(rs.length-1);
+  const y = v => T + (H-T-B)*(1 - v/yMax);
+  const path = arr => arr.map((v,i)=> v==null ? null : `${x(i)},${y(v)}`).filter(Boolean).join(' ');
+  let gridLines = '';
+  for (let h = 0; h <= yMax; h += 60) gridLines += `<line x1="${L}" x2="${W-R}" y1="${y(h)}" y2="${y(h)}" stroke="#e6eae7"/><text x="${L-8}" y="${y(h)+4}" text-anchor="end" font-size="11" fill="#5d6862">${h/60}시간</text>`;
+  const xLabels = rs.map((r,i)=>`<text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="12" fill="#5d6862">${r}회차</text>`).join('');
+  const hl = A.hl;
+  const classLines = classes.map((c,ci)=> c===hl ? '' : `<polyline points="${path(grid[ci])}" fill="none" stroke="#c9d3ce" stroke-width="1.5"/>`).join('');
+  const hlLine = hl ? `<polyline points="${path(grid[hl-1])}" fill="none" stroke="#b4541f" stroke-width="3"/>` + grid[hl-1].map((v,i)=> v==null?'':`<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#b4541f"/>`).join('') : '';
+  const gLine = `<polyline points="${path(gradeLine)}" fill="none" stroke="#1f7a53" stroke-width="3.5"/>` + gradeLine.map((v,i)=> v==null?'':`<circle cx="${x(i)}" cy="${y(v)}" r="4.5" fill="#1f7a53"/><text x="${x(i)}" y="${y(v)-10}" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f7a53">${hm(v)}</text>`).join('');
+
+  const first = rs[0], last = rs[rs.length-1];
+  return `<div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">회차별 추이</h2>
+      <div class="row"><span class="sub">강조할 반</span><select id="hl"><option value="">없음</option>${classes.map(c=>`<option value="${c}" ${c===hl?'selected':''}>${c}반</option>`).join('')}</select></div>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${gridLines}${xLabels}${classLines}${hlLine}${gLine}</svg>
+    <p class="note"><b style="color:#1f7a53">━ 학년 평균</b> &nbsp; <span style="color:#9aa6a0">━ 각 반</span>${hl?` &nbsp; <b style="color:#b4541f">━ ${hl}반</b>`:''}</p>
+    <div class="tablewrap" style="margin-top:8px"><table>
+      <thead><tr><th>반</th>${rs.map(r=>`<th>${r}회차</th>`).join('')}<th>${first}→${last}회차</th></tr></thead>
+      <tbody>
+        ${classes.map((c,ci)=>`<tr ${c===hl?'style="outline:2px solid #b4541f;outline-offset:-2px"':''}><td><b>${c}반</b></td>${grid[ci].map((v,i)=>`<td style="${shade(v)}">${hm(v)}${arrow(i?grid[ci][i-1]:null, v)}<br><small class="sub">${N_(c,rs[i])}명</small></td>`).join('')}<td class="${(chg(grid[ci][0],grid[ci][rs.length-1])??0)<0?'down':'up'}">${pct(chg(grid[ci][0],grid[ci][rs.length-1]))}</td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--ink)"><td><b>학년</b></td>${gradeLine.map((v,i)=>`<td><b>${hm(v)}</b>${arrow(i?gradeLine[i-1]:null, v)}<br><small class="sub">${N_(null,rs[i])}명</small></td>`).join('')}<td class="${(chg(gradeLine[0],gradeLine[rs.length-1])??0)<0?'down':'up'}"><b>${pct(chg(gradeLine[0],gradeLine[rs.length-1]))}</b></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">시간은 <b>시:분</b> 형식이에요. ▼는 직전 회차보다 줄어든 것, ▲는 늘어난 것이에요. 칸 색이 진할수록 사용 시간이 길어요.</p>
+  </div>`;
+}
 
 function renderAdmin(){
   const D = A.data; app.className = 'wrap wide';
@@ -410,6 +463,8 @@ function renderAdmin(){
       <p class="note">평균은 제출한 학생 기준이에요. 회차별 제출 인원이 크게 다르면 비교에 주의하세요.</p>
     </div>
 
+    ${trendHTML(D)}
+
     <div class="card links">
       <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">반별 입장 링크</h2><button class="btn sm" id="printqr">QR 인쇄</button></div>
       <div class="tablewrap"><table><tbody>${Object.entries(D.keys).map(([c,k])=>{ const u = `${base}?c=${c}&k=${k}`; return `<tr><td><b>${c}반</b></td><td class="l"><code>${esc(u)}</code></td><td><button class="btn sm ghost" data-copy="${esc(u)}">복사</button></td></tr>`; }).join('')}</tbody></table></div>
@@ -438,6 +493,7 @@ function renderAdmin(){
   $('#toggle').onclick = async () => { await api({ action:'setRound', key:A.key, open: String(!D.open) }); adminLoad(); };
   app.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨'; } catch { prompt('복사하세요', b.dataset.copy); } });
   $('#csv').onclick = () => downloadCSV(D);
+  const hlSel = $('#hl'); if (hlSel) hlSel.onchange = e => { A.hl = Number(e.target.value) || null; renderAdmin(); };
   $('#rsGo').onclick = async () => {
     const v = $('#rsScope').value, all = v === 'all', r = all ? null : Number(v.split(':')[1]);
     const label = all ? '전체 기록' : `${r}회차 기록`;
