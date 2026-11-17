@@ -47,8 +47,12 @@ h2{font-size:16px;font-weight:700;margin:0 0 12px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .chips button{border:1px solid var(--line);background:#fff;border-radius:99px;padding:6px 12px;font:inherit;font-size:14px;cursor:pointer;color:var(--ink)}
 .chips button.sel{border-color:var(--pri);background:var(--pri);color:#fff}
-.timein{display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:700}
-.timein input{width:76px;padding:12px 10px;font:inherit;font-size:20px;font-weight:900;text-align:center;border:1px solid var(--line);border-radius:12px}
+.result{display:flex;gap:14px;align-items:center;margin-top:12px;background:var(--pri-soft);border-radius:14px;padding:12px}
+.result img{width:80px;border-radius:10px;border:1px solid var(--line)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;padding:16px;z-index:50}
+.modal .box{background:#fff;border-radius:16px;padding:14px;max-width:min(520px,100%);max-height:92vh;overflow:auto;text-align:center}
+.modal img{max-width:100%;border-radius:10px;display:block;margin:8px auto 0}
+.flag{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--warn-soft);color:var(--warn)}
 .btn{display:block;width:100%;padding:15px;border:0;border-radius:14px;background:var(--pri);color:#fff;font:inherit;font-weight:700;font-size:16px;cursor:pointer;margin-top:16px}
 .btn:disabled{background:#b9c4be;cursor:not-allowed}
 .btn.ghost{background:#fff;color:var(--pri);border:1px solid var(--pri)}
@@ -95,14 +99,14 @@ td.l,th.l{text-align:left}
 /* ================== 설정 ================== */
 const CONFIG = {
   // Apps Script 웹 앱 URL. 비워두면 데모 모드(저장 안 됨)로 동작합니다.
-  API_URL: 'https://script.google.com/macros/s/AKfycbyUst6ikC1rvRLhT-TtPhXLScPVg0p74Re_5yIAjsde_6oaF4lrySjuCSoulJQcoA7v/exec',
+  API_URL: '',
   TITLE: '폰프리 사용량 조사',
-  GRADE: '2학년',
+  GRADE: '1학년',
   // 학생에게 보여줄 측정 기준
-  METRIC: '최근 7일 하루 평균 사용 시간',
+  METRIC: '이번 주 일일 평균 사용 시간',
   HOWTO: {
-    ios: '<b>설정</b> → <b>스크린 타임</b> → <b>모든 활동 보기</b> → 위쪽 <b>‘주’</b> 탭<br>‘일일 평균’ 시간이 보이게 캡처하세요.',
-    android: '<b>설정</b> → <b>디지털 웰빙 및 자녀 보호</b> → 화면 시간 그래프 → <b>주간</b> 보기<br>‘일일 평균’ 시간이 보이게 캡처하세요. (기종마다 메뉴 이름이 조금 달라요)'
+    ios: '<b>설정</b> → <b>스크린 타임</b> 화면에서<br><b>‘일일 평균’</b> 글자와 시간이 함께 보이게 캡처하세요.',
+    android: '<b>설정</b> → <b>디지털 웰빙 및 자녀 보호</b> → 화면 시간 그래프 → <b>주간</b> 보기<br><b>‘일일 평균’</b> 글자와 시간이 함께 보이게 캡처하세요. (기종마다 메뉴 이름이 조금 달라요)'
   }
 };
 /* ========================================= */
@@ -114,35 +118,51 @@ const DEMO = !CONFIG.API_URL;
 const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const fmt = m => { if (m == null || isNaN(m)) return '-'; m = Math.round(m); const h = Math.floor(m/60), mm = m%60; return h ? `${h}시간 ${mm}분` : `${mm}분`; };
 
-/* ---------- 시간 문자열 파싱 ---------- */
-function parseTimes(raw){
-  const text = String(raw)
-    .replace(/[Oo](?=\s*(시간|분|h|m))/g,'0')
-    .replace(/(\d)\s+(\d)(?=\s*(시간|분))/g,'$1$2');
-  const re = /(\d{1,2})\s*(?:시간|hours?|hrs?|h)\s*(?:(\d{1,2})\s*(?:분|minutes?|mins?|m)(?![a-z]))?|(\d{1,3})\s*(?:분|minutes?|mins?|m)(?![a-z])/gi;
-  const kw = /(일일\s*평균|평균|오늘|하루|총\s*사용|daily\s*average|average|today|total)/i;
-  const out = []; let m;
+/* ---------- 캡처 글자에서 '일일 평균'·'총 스크린 타임' 찾기 ---------- */
+const TIME_RE = /(\d{1,3})\s*(?:시간|hours?|hrs?|h)\s*(?:(\d{1,2})\s*(?:분|minutes?|mins?|m)(?![a-z]))?|(\d{1,3})\s*(?:분|minutes?|mins?|m)(?![a-z])/i;
+function normalizeText(raw){
+  return String(raw)
+    .replace(/[ \t]+/g, ' ')                                 // 긴 공백 줄이기
+    .replace(/([가-힣]) (?=[가-힣])/g, '$1')                  // "시 간" → "시간"
+    .replace(/[Oo](?=\s*(시간|분|h|m))/g, '0')
+    .replace(/(\d) (\d)(?=\s*(시간|분))/g, '$1$2');
+}
+// 키워드 바로 뒤(maxGap 글자 안)의 시간. 분이 깨져 읽힌 듯하면(예: "3시간 3332") 불확실로 표시
+function timeAfter(text, kwRe, maxGap){
+  const re = new RegExp(kwRe.source, 'gi'); let m;
   while ((m = re.exec(text))){
-    let min;
-    if (m[1] != null){ min = Number(m[1])*60 + (m[2] ? Number(m[2]) : 0); }
-    else { min = Number(m[3]); }
-    if (!(min > 0 && min <= 1440)) continue;
-    const before = text.slice(Math.max(0, m.index - 40), m.index);
-    out.push({ min, label: m[0].replace(/\s+/g,' ').trim(), key: kw.test(before), idx: m.index, hasHour: m[1] != null });
+    const start = m.index + m[0].length;
+    const seg = text.slice(start, start + maxGap + 20);
+    const t = TIME_RE.exec(seg);
+    if (t && t.index <= maxGap){
+      const min = t[1] != null ? Number(t[1])*60 + (t[2] ? Number(t[2]) : 0) : Number(t[3]);
+      const after = seg.slice(t.index + t[0].length);
+      const unsure = (t[1] != null && !t[2] && /^\s*\d/.test(after)) || /^[0-9A-Za-z]/.test(after);
+      if (min > 0) return { min, unsure };
+    }
   }
-  // 중복 제거
-  const seen = new Set(); const uniq = [];
-  for (const c of out){ if (!seen.has(c.min)){ seen.add(c.min); uniq.push(c); } }
-  // 추천값: 키워드 바로 뒤 → 시간 단위 포함 중 가장 앞 → 최댓값
-  let best = uniq.find(c => c.key) || uniq.find(c => c.hasHour) || uniq.slice().sort((a,b)=>b.min-a.min)[0] || null;
-  return { candidates: uniq.slice(0, 8), best };
+  return null;
+}
+function extractUsage(raw){
+  const text = normalizeText(raw);
+  // 1순위: '일일 평균'·'하루 평균'·'Daily Average' 바로 뒤 / 2순위: '평균' 바로 뒤(가까울 때만)
+  let d = timeAfter(text, /(?:일일|하루|일)평[균군귬]|daily\s*average/, 15);
+  if (!d) d = timeAfter(text, /평[균군귬]/, 10);
+  const t = timeAfter(text, /총(?:스크린|화면|사용)?(?:타임|시간)|total\s*screen\s*time/, 15);
+  const daily = d && d.min <= 1440 ? d.min : null, total = t ? t.min : null;
+  // 일일 평균은 주간 총 시간보다 클 수 없음
+  const unsure = !d || d.unsure || (total != null && daily != null && daily > total);
+  return { daily, total, unsure };
 }
 
 /* ---------- 이미지 전처리 + OCR ---------- */
-async function prepImage(file){
-  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
-  const scale = img.width < 1000 ? 2 : 1;
-  const W = img.width*scale, H = Math.min(img.height*scale, W*2.6); // 위쪽 위주로 읽기
+function loadImage(file){
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+}
+// targetW: 글자가 너무 크면 OCR이 '분'을 숫자로 잘못 읽어서, 폭을 줄여서 읽음
+function prepImage(img, targetW, thresh){
+  const scale = targetW / img.width;
+  const W = Math.round(targetW), H = Math.round(Math.min(img.height*scale, W*2.6)); // 위쪽 위주로 읽기
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
   ctx.drawImage(img, 0, 0, img.width, H/scale, 0, 0, W, H);
@@ -152,21 +172,72 @@ async function prepImage(file){
   const dark = sum/(px.length/4) < 110; // 다크 모드면 반전
   for (let i = 0; i < px.length; i += 4){
     let g = px[i]; if (dark) g = 255-g;
-    g = g < 150 ? Math.max(0, g*0.6) : 255; // 대비 강화
+    if (thresh) g = g < 150 ? Math.max(0, g*0.6) : 255;
     px[i]=px[i+1]=px[i+2]=g;
   }
   ctx.putImageData(d, 0, 0);
-  return { canvas: cv, url: img.src };
+  return cv;
 }
-async function runOCR(file, onProgress){
-  const { canvas } = await prepImage(file);
-  const r = await Tesseract.recognize(canvas, 'kor+eng', {
-    logger: m => { if (m.status === 'recognizing text') onProgress(m.progress); else if (/load/.test(m.status)) onProgress(Math.min(.15, (m.progress||0)*.15)); }
-  });
-  return r.data.text;
+// 여러 방식으로 읽어서 확실한 값이 나오면 멈춤
+const OCR_PASSES = [ { w:450, th:false }, { w:600, th:false }, { w:350, th:false }, { w:800, th:true } ];
+async function readUsage(img, onProgress){
+  let best = null;
+  for (let i = 0; i < OCR_PASSES.length; i++){
+    const { w, th } = OCR_PASSES[i];
+    const r = await Tesseract.recognize(prepImage(img, w, th), 'kor+eng', {
+      logger: m => { if (m.status === 'recognizing text') onProgress((i + m.progress) / OCR_PASSES.length); }
+    });
+    const u = extractUsage(r.data.text);
+    console.log('[phonefree] OCR pass', i + 1, JSON.stringify(u), r.data.text);
+    if (best && best.total != null && u.total == null) u.total = best.total;
+    if (u.daily != null && !u.unsure) return u;
+    if (!best || (best.daily == null && u.daily != null)) best = u;
+  }
+  return { daily: null, total: best && best.total, unsure: true }; // 확실하지 않으면 제출 막음
+}
+
+/* ---------- 워터마크 사진 + 중복 확인용 해시 ---------- */
+function watermarked(img, label){
+  const W = Math.min(720, img.width), H = Math.round(img.height * W / img.width);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, 0, 0, W, H);
+  // 사선 반복 글씨
+  ctx.save();
+  ctx.translate(W/2, H/2); ctx.rotate(-Math.PI/7);
+  ctx.font = `700 ${Math.round(W/22)}px "Noto Sans KR", sans-serif`;
+  ctx.fillStyle = 'rgba(200,30,30,0.16)'; ctx.textAlign = 'center';
+  const step = Math.round(W/5.5), diag = Math.hypot(W, H);
+  for (let y = -diag/2; y < diag/2; y += step) ctx.fillText(label, 0, y);
+  ctx.restore();
+  // 아래 띠
+  const bh = Math.round(W/14);
+  ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(0, H-bh, W, bh);
+  ctx.fillStyle = '#fff'; ctx.font = `700 ${Math.round(bh*0.45)}px "Noto Sans KR", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, W/2, H - bh/2);
+  return cv.toDataURL('image/jpeg', 0.72);
+}
+async function fileHash(file){
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2,'0')).join('').slice(0, 32);
+  } catch { return ''; }
+}
+function nowLabel(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /* ---------- API ---------- */
+function demoPhoto(label){
+  const cv = document.createElement('canvas'); cv.width = 360; cv.height = 300;
+  const x = cv.getContext('2d'); x.fillStyle = '#f2f2f7'; x.fillRect(0,0,360,300);
+  x.fillStyle = '#8e8e93'; x.font = '18px sans-serif'; x.fillText('일일 평균 (데모 사진)', 20, 50);
+  x.fillStyle = '#000'; x.font = '700 40px sans-serif'; x.fillText(label, 20, 105);
+  x.fillStyle = '#3b82f6'; [60,140,40].forEach((h,i)=>x.fillRect(30+i*70, 250-h, 40, h));
+  return cv.toDataURL('image/jpeg', .8);
+}
 const mock = (() => {
   const keys = {}; for (let c = 1; c <= 10; c++) keys[c] = 'DEMO' + c;
   let round = 1, open = true; const rows = [];
@@ -176,40 +247,59 @@ const mock = (() => {
     for (let r = 1; r <= 5; r++){
       if (r > 1 && Math.random() < .25) continue;
       const f = 1 - (r-1)*(.04 + (c%4)*.02) + (Math.random()-.5)*.2;
-      rows.push({ round:r, c, num:n, min:Math.round(base*f), device: Math.random()<.6?'아이폰':'안드로이드', method:'자동인식' });
+      const min = Math.round(base*f);
+      rows.push({ round:r, c, num:n, min, total: Math.round(min*(2+Math.random()*4)), device: Math.random()<.6?'아이폰':'안드로이드', method:'자동인식', time:new Date().toISOString(), hash:'h'+Math.random(), pid:'demo' });
     }
   }
+  // 중복 의심 예시: 3반 5번과 7반 12번이 같은 사진
+  const dupA = rows.find(r=>r.round===1&&r.c===3), dupB = rows.find(r=>r.round===1&&r.c===7);
+  if (dupA && dupB){ dupB.min = dupA.min; dupB.total = dupA.total; dupB.hash = dupA.hash; }
+  const photos = {};
   return async p => {
     await new Promise(r => setTimeout(r, 250));
     const chk = () => { const c = Number(p.c); if (!keys[c] || keys[c] !== p.k) throw new Error('입장 링크가 올바르지 않습니다.'); return c; };
-    if (p.action === 'info'){ const c = chk(); return { ok:true, classNo:c, round, open, maxNumber:35, submitted: rows.filter(r=>r.round===round&&r.c===c).map(r=>r.num) }; }
-    if (p.action === 'submit'){ const c = chk(); const i = rows.findIndex(r=>r.round===round&&r.c===c&&r.num===Number(p.num)); const row={round,c,num:Number(p.num),min:Number(p.min),device:p.device==='ios'?'아이폰':'안드로이드',method:p.method==='auto'?'자동인식':'직접수정'}; if(i>=0) rows[i]=row; else rows.push(row); return {ok:true, updated:i>=0}; }
-    if (p.action === 'admin'){ if (p.key !== 'demo') throw new Error('관리자 비밀번호가 틀렸습니다. (데모: demo)'); return { ok:true, round, open, classCount:10, maxNumber:35, keys, rows }; }
+    const adm = () => { if (p.key !== 'demo') throw new Error('관리자 비밀번호가 틀렸습니다. (데모: demo)'); };
+    if (p.action === 'info'){ const c = chk(); return { ok:true, classNo:c, round, open, maxNumber:30, photoDays:30, submitted: rows.filter(r=>r.round===round&&r.c===c).map(r=>r.num) }; }
+    if (p.action === 'submit'){ const c = chk(); const pid = 'p'+Date.now(); photos[pid] = p.photo; const i = rows.findIndex(r=>r.round===round&&r.c===c&&r.num===Number(p.num)); const row={round,c,num:Number(p.num),min:Number(p.min),total:p.total===''?null:Number(p.total),device:p.device==='ios'?'아이폰':'안드로이드',method:'자동인식',time:new Date().toISOString(),hash:p.hash,pid}; if(i>=0) rows[i]=row; else rows.push(row); return {ok:true, updated:i>=0}; }
+    if (p.action === 'admin'){ adm(); return { ok:true, round, open, classCount:10, maxNumber:30, photoDays:30, keys, rows }; }
+    if (p.action === 'photo'){ adm(); const r = rows.find(x=>x.pid===p.id); const url = photos[p.id] || demoPhoto(fmt(r?r.min:200)); return { ok:true, mime:'image/jpeg', data:url.split(',')[1] }; }
     if (p.action === 'reset'){ const before = rows.length; const keep = p.scope==='all' ? [] : rows.filter(r=>r.round!==Number(p.round)); rows.length = 0; rows.push(...keep); if (p.scope==='all') round = 1; return { ok:true, deleted: before-keep.length }; }
-    if (p.action === 'setRound'){ if (p.round) round = Number(p.round); if (p.open) open = p.open === 'true'; return { ok:true }; }
+    if (p.action === 'setRound'){ adm(); if (p.round) round = Number(p.round); if (p.open) open = p.open === 'true'; return { ok:true }; }
     throw new Error('알 수 없는 요청');
   };
 })();
+const NET_ERR = e => new Error('서버에 연결하지 못했어요. 와이파이를 끄고 데이터로 접속하거나, 다른 브라우저(크롬 시크릿 창 등)로 다시 열어 주세요. (오류: ' + (e && e.message || e) + ')');
+// 'c'는 구글 Apps Script가 내부적으로 쓰는 예약 파라미터라 'cls'로 바꿔 보냄
+const toServer = p => { const q = { ...p }; if ('c' in q){ q.cls = q.c; delete q.c; } return q; };
 async function api(p){
   let res;
   if (DEMO) res = await mock(p);
   else {
-    // 'c'는 구글 Apps Script가 내부적으로 쓰는 예약 파라미터라 'cls'로 바꿔 보냄
-    const q = { ...p }; if ('c' in q){ q.cls = q.c; delete q.c; }
     try {
-      const r = await fetch(CONFIG.API_URL + '?' + new URLSearchParams(q).toString());
+      const r = await fetch(CONFIG.API_URL + '?' + new URLSearchParams(toServer(p)).toString());
       res = JSON.parse(await r.text());
-    } catch (e) {
-      console.error('[phonefree] API 연결 실패', e);
-      throw new Error('서버에 연결하지 못했어요. 와이파이를 끄고 데이터로 접속하거나, 다른 브라우저(크롬 시크릿 창 등)로 다시 열어 주세요. (오류: ' + (e && e.message || e) + ')');
-    }
+    } catch (e) { console.error('[phonefree] API 연결 실패', e); throw NET_ERR(e); }
+  }
+  if (!res.ok) throw new Error(res.error || '오류가 발생했습니다.');
+  return res;
+}
+// 사진이 들어가는 제출은 POST (text/plain 이라 추가 확인 요청 없이 전송됨)
+async function apiPost(p){
+  let res;
+  if (DEMO) res = await mock(p);
+  else {
+    try {
+      const r = await fetch(CONFIG.API_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: JSON.stringify(toServer(p)) });
+      res = JSON.parse(await r.text());
+    } catch (e) { console.error('[phonefree] API 연결 실패', e); throw NET_ERR(e); }
   }
   if (!res.ok) throw new Error(res.error || '오류가 발생했습니다.');
   return res;
 }
 
 /* ================== 학생 화면 ================== */
-const S = { classNo:null, key:null, round:1, open:true, maxNumber:35, submitted:[], num:null, device:null, ocrMin:null, cands:[], min:null };
+const S = { classNo:null, key:null, round:1, open:true, maxNumber:30, photoDays:30, submitted:[], num:null, device:null,
+  img:null, file:null, daily:null, total:null, status:'idle' };
 
 async function studentInit(){
   S.classNo = params.get('c'); S.key = params.get('k');
@@ -220,9 +310,16 @@ async function studentInit(){
   app.innerHTML = `<p class="sub">불러오는 중…</p>`;
   try {
     const r = await api({ action:'info', c:S.classNo, k:S.key });
-    Object.assign(S, { round:r.round, open:r.open, maxNumber:r.maxNumber, submitted:r.submitted });
+    Object.assign(S, { round:r.round, open:r.open, maxNumber:r.maxNumber, photoDays:r.photoDays || 30, submitted:r.submitted });
     renderStudent();
   } catch(e){ app.innerHTML = `<h1>${esc(CONFIG.TITLE)}</h1><div class="err">${esc(e.message)}</div>`; }
+}
+
+function resultHTML(){
+  if (S.status === 'reading') return `<div class="preview"><img src="${S.img.src}" alt=""><div style="flex:1"><div class="sub">시간을 읽는 중… <span id="pct">0%</span></div><div class="progress"><i id="bar"></i></div><p class="note">처음에는 글자 데이터를 받느라 10~20초 걸릴 수 있어요.</p></div></div>`;
+  if (S.status === 'fail') return `<div class="preview"><img src="${S.img.src}" alt=""><div class="err" style="margin:0;flex:1"><b>‘일일 평균’ 시간을 찾지 못했어요.</b><br>‘일일 평균’ 글자와 시간이 잘 보이게 다시 캡처해서 올려 주세요.<br><small>계속 안 되면 담임 선생님께 말씀해 주세요.</small></div></div>`;
+  if (S.status === 'ok') return `<div class="result"><img src="${S.img.src}" alt=""><div><small class="sub">인식된 일일 평균</small><div class="big" style="margin:2px 0">${fmt(S.daily)}</div><small class="sub">이 시간으로 제출돼요. 틀리면 다시 캡처해서 올려 주세요.</small></div></div>`;
+  return '';
 }
 
 function renderStudent(){
@@ -252,71 +349,42 @@ function renderStudent(){
     <div class="howto ${S.device?'':'hidden'}" id="howto">${S.device?CONFIG.HOWTO[S.device]:''}</div>
   </div>
   <div class="card ${S.device&&S.num?'':'hidden'}" id="c3">
-    <div class="step"><b>3</b><span>캡처 올리고 시간 확인</span></div>
-    <label class="drop"><input type="file" accept="image/*" id="file"><strong>캡처 이미지 선택</strong>사용 시간 화면을 캡처해서 올려주세요</label>
-    <div id="ocrbox"></div>
-    <div class="timein">
-      <input type="number" inputmode="numeric" id="hh" min="0" max="24" placeholder="0"> 시간
-      <input type="number" inputmode="numeric" id="mm" min="0" max="59" placeholder="0"> 분
-    </div>
-    <p class="note">🔒 사진은 이 폰 안에서만 읽고 <b>서버로 보내지 않아요.</b> 시간 숫자만 저장돼요.<br>자동 인식이 틀리면 직접 고쳐서 내면 돼요.</p>
-    <button class="btn" id="submit" disabled>제출하기</button>
+    <div class="step"><b>3</b><span>캡처 올리기</span></div>
+    <label class="drop ${S.status==='reading'?'hidden':''}"><input type="file" accept="image/*" id="file"><strong>${S.status==='idle'?'캡처 이미지 선택':'다시 캡처해서 올리기'}</strong>‘일일 평균’이 보이는 화면을 올려주세요</label>
+    <div id="ocrbox">${resultHTML()}</div>
+    <p class="note">📷 올린 사진에는 <b>${esc(CONFIG.GRADE)} ${esc(S.classNo)}반 ${S.num||''}번</b>이 표시되어 담당 선생님만 볼 수 있는 곳에 <b>${S.photoDays}일</b> 동안 보관된 뒤 자동으로 삭제돼요. 사진에 보이는 앱 사용 내역도 선생님이 볼 수 있어요.<br>시간은 사진에서 자동으로 읽어서 직접 고칠 수 없어요. 다른 사람 캡처를 올리면 확인돼요.</p>
+    <button class="btn" id="submit" ${S.status==='ok'?'':'disabled'}>제출하기</button>
     <div id="serr"></div>
   </div>`;
 
   $('#nums').onclick = e => { const b = e.target.closest('button'); if (!b) return; S.num = Number(b.dataset.n); renderStudent(); };
   app.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { S.device = b.dataset.d; renderStudent(); });
   const file = $('#file'); if (file) file.onchange = onFile;
-  const hh = $('#hh'), mm = $('#mm');
-  if (hh){
-    if (S.min != null){ hh.value = Math.floor(S.min/60); mm.value = S.min%60; }
-    hh.oninput = mm.oninput = syncTime;
-    $('#submit').onclick = onSubmit;
-    syncTime();
-    if (S.cands.length) drawCands();
-  }
-}
-
-function syncTime(){
-  const h = Number($('#hh').value||0), m = Number($('#mm').value||0);
-  const ok = ($('#hh').value!=='' || $('#mm').value!=='') && h>=0 && h<=24 && m>=0 && m<60 && (h*60+m)<=1440;
-  S.min = ok ? h*60+m : null;
-  $('#submit').disabled = !ok;
-  app.querySelectorAll('.chips button').forEach(b => b.classList.toggle('sel', Number(b.dataset.m) === S.min));
-}
-
-function drawCands(){
-  const box = $('#ocrbox');
-  if (!S.cands.length){ box.innerHTML = `<div class="err">시간을 찾지 못했어요. 아래에 직접 입력해 주세요.</div>`; return; }
-  box.innerHTML = `<p class="note" style="margin-top:12px">찾은 시간 (맞는 것을 누르세요)</p><div class="chips">${S.cands.map(c=>`<button data-m="${c.min}">${fmt(c.min)}</button>`).join('')}</div>`;
-  box.querySelectorAll('button').forEach(b => b.onclick = () => { const v = Number(b.dataset.m); $('#hh').value = Math.floor(v/60); $('#mm').value = v%60; syncTime(); });
-  syncTime();
+  const sb = $('#submit'); if (sb) sb.onclick = onSubmit;
 }
 
 async function onFile(e){
   const f = e.target.files[0]; if (!f) return;
-  const box = $('#ocrbox');
-  box.innerHTML = `<div class="preview"><img src="${URL.createObjectURL(f)}" alt=""><div style="flex:1"><div class="sub">시간을 읽는 중… <span id="pct">0%</span></div><div class="progress"><i id="bar"></i></div><p class="note">처음에는 글자 데이터를 받느라 10~20초 걸릴 수 있어요.</p></div></div>`;
+  try { S.img = await loadImage(f); } catch { S.status = 'fail'; renderStudent(); return; }
+  S.file = f; S.daily = S.total = null; S.status = 'reading'; renderStudent();
   try {
-    const text = await runOCR(f, p => { const v = Math.round(p*100); const b = $('#bar'), t = $('#pct'); if (b) b.style.width = v+'%'; if (t) t.textContent = v+'%'; });
-    const { candidates, best } = parseTimes(text);
-    S.cands = candidates; S.ocrMin = best ? best.min : null;
-    if (best){ $('#hh').value = Math.floor(best.min/60); $('#mm').value = best.min%60; }
-    drawCands();
-  } catch(err){
-    S.cands = []; S.ocrMin = null;
-    box.innerHTML = `<div class="err">이미지를 읽지 못했어요. 아래에 직접 입력해 주세요.</div>`;
-  }
+    const u = await readUsage(S.img, p => { const v = Math.round(p*100); const b = $('#bar'), t = $('#pct'); if (b) b.style.width = v+'%'; if (t) t.textContent = v+'%'; });
+    S.daily = u.daily; S.total = u.total; S.status = u.daily != null ? 'ok' : 'fail';
+  } catch(err){ console.error(err); S.status = 'fail'; }
+  renderStudent();
 }
 
 async function onSubmit(){
+  if (S.status !== 'ok') return;
   const btn = $('#submit'); btn.disabled = true; btn.textContent = '제출 중…';
   try {
-    const r = await api({ action:'submit', c:S.classNo, k:S.key, num:S.num, min:S.min, device:S.device,
-      method: S.ocrMin === S.min ? 'auto' : 'manual', ocr: S.ocrMin ?? '' });
+    const label = `${CONFIG.GRADE} ${S.classNo}반 ${S.num}번 · ${S.round}회차 · ${nowLabel()}`;
+    const photo = watermarked(S.img, label);
+    const hash = await fileHash(S.file);
+    const r = await apiPost({ action:'submit', c:S.classNo, k:S.key, num:S.num, min:S.daily, total:S.total ?? '', device:S.device, hash, photo });
     app.innerHTML = `<div class="card center" style="margin-top:40px">
       <span class="badge">${esc(S.classNo)}반 ${S.num}번 · ${S.round}회차</span>
-      <div class="big">${fmt(S.min)}</div>
+      <div class="big">${fmt(S.daily)}</div>
       <p class="sub">${r.updated?'새 값으로 바꿔서 ':''}제출했어요. 고마워요!</p>
       <button class="btn ghost" onclick="location.reload()">처음으로</button></div>`;
   } catch(e){
@@ -326,7 +394,70 @@ async function onSubmit(){
 }
 
 /* ================== 관리자 화면 ================== */
-const A = { key:null, data:null, base:1, cmp:2 };
+const A = { key:null, data:null, base:1, cmp:2, hl:null, chkC:1, chkR:null };
+
+/* ---------- 중복 의심: 같은 사진 파일 또는 일일 평균·총 시간이 모두 같은 제출 ---------- */
+function dupFlags(D){
+  const flags = {}, by = {};
+  const add = (k, r) => (by[k] = by[k] || []).push(r);
+  D.rows.forEach(r => {
+    if (r.hash) add(`h|${r.round}|${r.hash}`, r);
+    if (r.total != null) add(`v|${r.round}|${r.min}|${r.total}`, r);
+  });
+  Object.entries(by).forEach(([k, list]) => {
+    if (list.length < 2) return;
+    const why = k[0] === 'h' ? '같은 사진 파일' : '시간 수치 동일';
+    list.forEach(r => {
+      const others = list.filter(o => o !== r).map(o => `${o.c}반 ${o.num}번`).join(', ');
+      const key = `${r.round}|${r.c}|${r.num}`;
+      flags[key] = flags[key] ? flags[key] : `${why}: ${others}`;
+    });
+  });
+  return flags;
+}
+
+/* ---------- 제출 확인 (반별 목록 + 사진) ---------- */
+function checkHTML(D){
+  const rs = [...new Set([...D.rows.map(r=>r.round), D.round])].sort((a,b)=>a-b);
+  const R = A.chkR ?? D.round, C = A.chkC;
+  const flags = dupFlags(D);
+  const allFlags = D.rows.filter(r => r.round === R && flags[`${r.round}|${r.c}|${r.num}`]);
+  const list = [];
+  for (let n = 1; n <= D.maxNumber; n++) list.push(D.rows.find(r => r.round===R && r.c===C && r.num===n) || { num:n, none:true });
+  const t = iso => { if (!iso) return '-'; const d = new Date(iso); return isNaN(d) ? '-' : `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+  return `<div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">제출 확인</h2>
+      <div class="row">
+        <select id="chkR">${rs.map(r=>`<option value="${r}" ${r===R?'selected':''}>${r}회차</option>`).join('')}</select>
+        <select id="chkC">${Array.from({length:D.classCount},(_,i)=>i+1).map(c=>`<option value="${c}" ${c===C?'selected':''}>${c}반</option>`).join('')}</select>
+      </div>
+    </div>
+    ${allFlags.length ? `<div class="err" style="margin-top:0"><b>${R}회차 중복 의심 ${allFlags.length}건</b><br>${allFlags.map(r=>`${r.c}반 ${r.num}번 — ${esc(flags[`${r.round}|${r.c}|${r.num}`])}`).join('<br>')}</div>` : `<p class="note" style="margin-top:0">${R}회차에는 중복 의심 제출이 없어요.</p>`}
+    <div class="tablewrap" style="margin-top:8px"><table>
+      <thead><tr><th>번호</th><th>일일 평균</th><th>총 스크린 타임</th><th>기기</th><th>제출 시각</th><th>확인</th><th>사진</th></tr></thead>
+      <tbody>${list.map(r => r.none
+        ? `<tr><td>${r.num}번</td><td colspan="6" class="sub" style="color:#a3ada8">미제출</td></tr>`
+        : `<tr><td><b>${r.num}번</b></td><td><b>${fmt(r.min)}</b></td><td>${r.total!=null?fmt(r.total):'-'}</td><td>${esc(r.device||'')}</td><td>${t(r.time)}</td>
+           <td>${flags[`${r.round}|${r.c}|${r.num}`]?`<span class="flag" title="${esc(flags[`${r.round}|${r.c}|${r.num}`])}">중복 의심</span>`:''}</td>
+           <td>${r.pid?`<button class="btn sm ghost" data-photo="${esc(r.pid)}" data-label="${C}반 ${r.num}번 · ${R}회차">보기</button>`:'-'}</td></tr>`).join('')}</tbody>
+    </table></div>
+    <p class="note">제출 ${list.filter(r=>!r.none).length}명 / ${D.maxNumber}명. 사진은 제출 후 ${D.photoDays||30}일이 지나면 자동으로 삭제돼요. ‘중복 의심’은 다른 학생과 같은 사진 파일이거나 일일 평균·총 시간이 모두 같은 경우예요.</p>
+  </div>`;
+}
+
+async function showPhoto(id, label){
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="box"><b>${esc(label)}</b><p class="sub" id="pmsg">사진 불러오는 중…</p><button class="btn sm ghost" style="margin-top:10px">닫기</button></div>`;
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.onclick = e => { if (e.target === m || e.target.tagName === 'BUTTON') close(); };
+  try {
+    const r = await api({ action:'photo', key:A.key, id });
+    const img = new Image(); img.src = `data:${r.mime||'image/jpeg'};base64,${r.data}`;
+    $('#pmsg').replaceWith(img);
+  } catch(e){ $('#pmsg').textContent = e.message; }
+}
 
 function adminLogin(msg){
   app.className = 'wrap';
@@ -465,6 +596,8 @@ function renderAdmin(){
 
     ${trendHTML(D)}
 
+    ${checkHTML(D)}
+
     <div class="card links">
       <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">반별 입장 링크</h2><button class="btn sm" id="printqr">QR 인쇄</button></div>
       <div class="tablewrap"><table><tbody>${Object.entries(D.keys).map(([c,k])=>{ const u = `${base}?c=${c}&k=${k}`; return `<tr><td><b>${c}반</b></td><td class="l"><code>${esc(u)}</code></td><td><button class="btn sm ghost" data-copy="${esc(u)}">복사</button></td></tr>`; }).join('')}</tbody></table></div>
@@ -480,7 +613,7 @@ function renderAdmin(){
         </select>
         <button class="btn sm" id="rsGo" style="background:var(--warn)">초기화</button>
       </div>
-      <p class="note">지운 기록은 되돌릴 수 없어요. 필요하면 먼저 <b>CSV 받기</b>로 백업하세요. 반별 입장 링크는 바뀌지 않아요.</p>
+      <p class="note">지운 기록은 되돌릴 수 없어요. 필요하면 먼저 <b>CSV 받기</b>로 백업하세요. 지운 기록의 사진도 함께 휴지통으로 옮겨져요. 반별 입장 링크는 바뀌지 않아요.</p>
     </div>
   </div>
   <div id="qrarea" class="hidden"><h1 class="center">${esc(CONFIG.TITLE)}</h1><p class="sub center">${esc(CONFIG.METRIC)}</p><div class="qrgrid" id="qrgrid"></div>
@@ -494,6 +627,9 @@ function renderAdmin(){
   app.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨'; } catch { prompt('복사하세요', b.dataset.copy); } });
   $('#csv').onclick = () => downloadCSV(D);
   const hlSel = $('#hl'); if (hlSel) hlSel.onchange = e => { A.hl = Number(e.target.value) || null; renderAdmin(); };
+  $('#chkR').onchange = e => { A.chkR = Number(e.target.value); renderAdmin(); };
+  $('#chkC').onchange = e => { A.chkC = Number(e.target.value); renderAdmin(); };
+  app.querySelectorAll('[data-photo]').forEach(b => b.onclick = () => showPhoto(b.dataset.photo, b.dataset.label));
   $('#rsGo').onclick = async () => {
     const v = $('#rsScope').value, all = v === 'all', r = all ? null : Number(v.split(':')[1]);
     const label = all ? '전체 기록' : `${r}회차 기록`;
@@ -521,8 +657,9 @@ function renderAdmin(){
 function confirmRound(r){ return window.confirm(`현재 회차를 ${r}회차로 바꿀까요? 이후 학생 제출은 ${r}회차로 저장돼요.`); }
 
 function downloadCSV(D){
-  const lines = [['회차','반','번호','사용시간(분)','기기','입력방식']].concat(
-    D.rows.slice().sort((a,b)=>a.round-b.round||a.c-b.c||a.num-b.num).map(r=>[r.round,r.c,r.num,r.min,r.device,r.method]));
+  const flags = dupFlags(D);
+  const lines = [['회차','반','번호','일일평균(분)','총스크린타임(분)','기기','제출시각','중복의심']].concat(
+    D.rows.slice().sort((a,b)=>a.round-b.round||a.c-b.c||a.num-b.num).map(r=>[r.round,r.c,r.num,r.min,r.total??'',r.device,r.time||'',`"${(flags[`${r.round}|${r.c}|${r.num}`]||'').replace(/"/g,'""')}"`]));
   const blob = new Blob(['﻿' + lines.map(l=>l.join(',')).join('\n')], { type:'text/csv;charset=utf-8' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '폰프리_사용량.csv'; a.click();
 }
