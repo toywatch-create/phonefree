@@ -99,17 +99,31 @@ td.l,th.l{text-align:left}
 /* ================== 설정 ================== */
 const CONFIG = {
   // Apps Script 웹 앱 URL. 비워두면 데모 모드(저장 안 됨)로 동작합니다.
-  API_URL: 'https://script.google.com/macros/s/AKfycbyUst6ikC1rvRLhT-TtPhXLScPVg0p74Re_5yIAjsde_6oaF4lrySjuCSoulJQcoA7v/exec',
+  API_URL: '',
   TITLE: '폰프리 사용량 조사',
-  GRADE: '2학년',
-  // 학생에게 보여줄 측정 기준
-  METRIC: '이번 주 일일 평균 사용 시간',
+  GRADE: '1학년',
+  // 학생에게 보여줄 측정 기준. {W}=지난주 주차(예: 46주), {R}=지난주 날짜(예: 11/8~11/14)는 자동으로 채워짐
+  METRIC: '지난주({R}) 일일 평균 사용 시간',
   HOWTO: {
-    ios: '<b>설정</b> → <b>스크린 타임</b> 화면에서<br><b>‘일일 평균’</b> 글자와 시간이 함께 보이게 캡처하세요.',
-    android: '<b>설정</b> → <b>디지털 웰빙 및 자녀 보호</b> → 화면 시간 그래프 → <b>주간</b> 보기<br><b>‘일일 평균’</b> 글자와 시간이 함께 보이게 캡처하세요. (기종마다 메뉴 이름이 조금 달라요)'
+    ios: '<b>설정</b> → <b>스크린 타임</b> → <b>모든 활동 보기</b> → 위쪽 <b>‘주’</b> 탭<br>그래프를 손가락으로 <b>왼쪽에서 오른쪽으로 한 번 밀어 지난주({R})</b>로 이동한 뒤,<br><b>‘일일 평균’</b> 글자와 시간이 함께 보이게 캡처하세요.',
+    android: '<b>설정</b> → <b>디지털 웰빙 및 자녀 보호</b> → 오른쪽 위 <b>주간 리포트</b> 아이콘(세로 막대 모양)<br>위쪽 주 목록에서 <b>{W}</b>({R})를 고르고,<br><b>큰 시간 숫자와 그 아래 ‘평균’ 글자</b>(‘하루 평균 사용시간’ 또는 ‘일일 평균’)가 함께 보이게 캡처하세요.'
   }
 };
 /* ========================================= */
+
+/* 지난주 = 오늘 이전에 끝난 일~토 한 주 (삼성 주간 리포트 주차와 같은 방식으로 계산) */
+function lastWeek(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const end = new Date(today); end.setDate(today.getDate() - today.getDay() - 1);   // 지난 토요일
+  const start = new Date(end); start.setDate(end.getDate() - 6);                    // 그 전 일요일
+  const jan1 = new Date(start.getFullYear(), 0, 1);
+  const firstSun = new Date(jan1); firstSun.setDate(1 - jan1.getDay());             // 1월 1일이 들어 있는 주의 일요일
+  const week = Math.floor((start - firstSun) / 864e5 / 7) + 1;
+  const md = d => `${d.getMonth()+1}/${d.getDate()}`;
+  return { week: `${week}주`, range: `${md(start)}~${md(end)}` };
+}
+const LW = lastWeek();
+const fill = s => String(s).replace(/\{W\}/g, LW.week).replace(/\{R\}/g, LW.range);
 
 const $ = s => document.querySelector(s);
 const app = $('#app');
@@ -138,16 +152,43 @@ function timeAfter(text, kwRe, maxGap){
       const min = t[1] != null ? Number(t[1])*60 + (t[2] ? Number(t[2]) : 0) : Number(t[3]);
       const after = seg.slice(t.index + t[0].length);
       const unsure = (t[1] != null && !t[2] && /^\s*\d/.test(after)) || /^[0-9A-Za-z]/.test(after);
-      if (min > 0) return { min, unsure };
+      const axis = !t[2] && !t[3] && /^\s{0,6}\d{1,2}\s*시간(?!\s*\d)/.test(after); // 'N시간' 바로 뒤에 또 'N시간' → 그래프 눈금
+      if (min > 0) return { min, unsure, hasMin: !!(t[2] || t[3]), axis };
+    }
+  }
+  return null;
+}
+// 키워드 바로 앞(maxGap 글자 안)의 시간 — 삼성은 "8시간 37분 / 하루 평균 사용시간"처럼 숫자가 위에 있음
+function timeBefore(text, kwRe, maxGap){
+  const re = new RegExp(kwRe.source, 'gi'); let m;
+  while ((m = re.exec(text))){
+    const seg = text.slice(Math.max(0, m.index - maxGap - 20), m.index);
+    const all = [...seg.matchAll(new RegExp(TIME_RE.source, 'gi'))];
+    const t = all[all.length - 1];
+    if (t){
+      const gap = seg.length - (t.index + t[0].length);
+      const min = t[1] != null ? Number(t[1])*60 + (t[2] ? Number(t[2]) : 0) : Number(t[3]);
+      const after = seg.slice(t.index + t[0].length);
+      const unsure = (t[1] != null && !t[2] && /^\s*\d/.test(after)) || /^[0-9A-Za-z]/.test(after);
+      if (gap <= maxGap && min > 0) return { min, unsure, hasMin: !!(t[2] || t[3]) };
     }
   }
   return null;
 }
 function extractUsage(raw){
   const text = normalizeText(raw);
-  // 1순위: '일일 평균'·'하루 평균'·'Daily Average' 바로 뒤 / 2순위: '평균' 바로 뒤(가까울 때만)
-  let d = timeAfter(text, /(?:일일|하루|일)평[균군귬]|daily\s*average/, 15);
-  if (!d) d = timeAfter(text, /평[균군귬]/, 10);
+  // '일일 평균'·'하루 평균 (사용시간)' 문구의 바로 위(삼성)와 바로 아래(아이폰) 시간을 모두 살펴봄
+  // 삼성 '하루 평균 사용시간'은 항상 숫자가 위에 있으므로 위쪽만 봄 (아래는 그래프 눈금)
+  let d = timeBefore(text, /(?:하루|일일|일)평[균군귬]사용\s*시간/, 12);
+  if (!d){
+    const KW = /(?:(?:일일|하루|일)평[균군귬]|daily\s*average)(?!\s*사용)/;
+    const above = timeBefore(text, KW, 12), below = timeAfter(text, KW, 15);
+    // 둘 다 있으면: 그래프 눈금(예: '20시간')처럼 분이 없는 쪽보다 분까지 있는 쪽을, 비기면 위쪽을 택함
+    d = above && below ? ((below.hasMin && !above.hasMin) ? below : above) : (above || below);
+    // 아래쪽 값이 'N시간' 다음에 또 'N시간'이 이어지면 그래프 눈금이라 불확실로 처리
+    if (d && d === below && d.axis) d = { ...d, unsure: true };
+  }
+  if (!d) d = timeAfter(text, /평[균군귬](?!\s*사용)/, 10);
   const t = timeAfter(text, /총(?:스크린|화면|사용)?(?:타임|시간)|total\s*screen\s*time/, 15);
   const daily = d && d.min <= 1440 ? d.min : null, total = t ? t.min : null;
   // 일일 평균은 주간 총 시간보다 클 수 없음
@@ -326,7 +367,7 @@ function renderStudent(){
   const head = `${DEMO?'<div class="demo">데모 모드: 실제로 저장되지 않아요.</div>':''}
     <span class="badge">${esc(CONFIG.GRADE)} ${esc(S.classNo)}반 · ${S.round}회차</span>
     <h1>${esc(CONFIG.TITLE)}</h1>
-    <p class="sub">측정 기준: <b>${esc(CONFIG.METRIC)}</b></p>`;
+    <p class="sub">측정 기준: <b>${esc(fill(CONFIG.METRIC))}</b></p>`;
   if (!S.open){ app.innerHTML = head + `<div class="err">지금은 제출 기간이 아니에요. 선생님 안내를 기다려 주세요.</div>`; return; }
 
   let nums = '';
@@ -346,7 +387,7 @@ function renderStudent(){
       <button data-d="ios" class="${S.device==='ios'?'sel':''}">아이폰</button>
       <button data-d="android" class="${S.device==='android'?'sel':''}">안드로이드</button>
     </div>
-    <div class="howto ${S.device?'':'hidden'}" id="howto">${S.device?CONFIG.HOWTO[S.device]:''}</div>
+    <div class="howto ${S.device?'':'hidden'}" id="howto">${S.device?fill(CONFIG.HOWTO[S.device]):''}</div>
   </div>
   <div class="card ${S.device&&S.num?'':'hidden'}" id="c3">
     <div class="step"><b>3</b><span>캡처 올리기</span></div>
@@ -378,7 +419,7 @@ async function onSubmit(){
   if (S.status !== 'ok') return;
   const btn = $('#submit'); btn.disabled = true; btn.textContent = '제출 중…';
   try {
-    const label = `${CONFIG.GRADE} ${S.classNo}반 ${S.num}번 · ${S.round}회차 · ${nowLabel()}`;
+    const label = `${CONFIG.GRADE} ${S.classNo}반 ${S.num}번 · ${S.round}회차 · 기준 ${LW.week}(${LW.range}) · ${nowLabel()}`;
     const photo = watermarked(S.img, label);
     const hash = await fileHash(S.file);
     const r = await apiPost({ action:'submit', c:S.classNo, k:S.key, num:S.num, min:S.daily, total:S.total ?? '', device:S.device, hash, photo });
@@ -616,7 +657,7 @@ function renderAdmin(){
       <p class="note">지운 기록은 되돌릴 수 없어요. 필요하면 먼저 <b>CSV 받기</b>로 백업하세요. 지운 기록의 사진도 함께 휴지통으로 옮겨져요. 반별 입장 링크는 바뀌지 않아요.</p>
     </div>
   </div>
-  <div id="qrarea" class="hidden"><h1 class="center">${esc(CONFIG.TITLE)}</h1><p class="sub center">${esc(CONFIG.METRIC)}</p><div class="qrgrid" id="qrgrid"></div>
+  <div id="qrarea" class="hidden"><h1 class="center">${esc(CONFIG.TITLE)}</h1><p class="sub center">${esc(fill(CONFIG.METRIC))}</p><div class="qrgrid" id="qrgrid"></div>
     <button class="btn noprint" id="qrback">돌아가기</button></div>`;
 
   $('#reload').onclick = adminLoad;
